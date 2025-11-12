@@ -1,0 +1,45 @@
+# Example configuration for a single-node WatchDog deployment
+# Copy this file and adjust the values before running the CLI.
+
+xui:
+  base_url: "http://127.0.0.1:2053/randompath"
+  username: "admin"
+  password: "change-me"
+  request_timeout: 10
+
+xray:
+  access_log: "/var/log/xray/access.json"
+  error_log: "/var/log/xray/error.log"
+  is_json: true
+  follow: false
+
+metrics:
+  windows:
+    - label: "1m"
+      duration: "1m"
+    - label: "5m"
+      duration: "5m"
+  retention: "7d"
+
+rules:
+  default_profile: "baseline"
+  profiles:
+    - name: "baseline"
+      connection_threshold: 100
+      burst_bytes: 500000000
+      unique_ip_threshold: 20
+      restricted_targets: []
+      score_threshold: 1.0
+
+telegram:
+  bot_token: "123456:ABCDEF"
+  chat_ids: []
+  notify_on_warning: true
+  notify_on_block: true
+  dry_run: true
+
+scheduler:
+  poll_interval: "30s"
+  log_scan_interval: "10s"
+
+state_dir: "./state"

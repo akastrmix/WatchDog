@@ -1,2 +1,125 @@
 # WatchDog
-Anti-spam monitoring tool for 3x-ui 
+
+WatchDog 是一套为 3x-ui / Xray 节点量身设计的轻量化滥用监测内核。目前我们已经提供了**第一阶段的可执行骨架**：只需几条指令即可在 VPS 上完成环境准备，并通过命令行一次性拉取 3x-ui API 与 Xray 日志中的关键信息，方便快速验证连接是否正常。
+
+## 系统目标
+
+* **以客户 (client/email) 为核心**：统一聚合每个客户的来源 IP、会话并发、访问域名分类、带宽/流量等信息。
+* **可配置的封禁模型**：根据连接数、跨 /24 IP、短时间大流量、扫描爆破迹象、高危域名访问等指标动态调整严格程度，区分“告警”和“立即封禁”。
+* **轻量部署**：目标运行环境为 1C1G VPS，仅依赖 3x-ui 官方 API 与 Xray 日志，避免重复造轮子。
+* **可观测性**：本地日志 + Telegram 机器人推送，输出详细上下文以便调试与取证。
+
+## 部署架构对比
+
+WatchDog 既可以**每台机器独立运行**，也可以设计为**集中式主控 + 轻量探针**。两种方式的差异如下：
+
+### 1. 单节点独立部署
+
+每台运行 3x-ui/Xray 的服务器都启动一份 WatchDog 服务，直接访问本机的 3x-ui API 与 Xray 日志。
+
+* **优点**
+  * 不需要额外的网络拓扑或远程认证机制，部署最简单。
+  * 日志与封禁动作都在本地完成，延迟最小。
+* **缺点**
+  * 多台服务器时无法全局查看告警历史或统一配置。
+  * 升级/维护需要逐台执行，规模扩大后管理成本高。
+
+### 2. 集中式主控 + 探针模式
+
+在每台节点上运行一个“探针”进程，仅负责读取本地日志、调用 3x-ui API 并将整理后的指标推送给中心主控服务；主控集中执行规则评估、封禁和告警。
+
+* **优点**
+  * 主控集中存储所有客户的历史行为，便于建立统一的封禁策略与面板。
+  * 节点端探针逻辑更轻量，只需定时推送指标或被动响应主控请求。
+  * 更新策略或内核时只需改动主控端，探针通过版本化配置保持兼容。
+* **缺点**
+  * 需要在主控与探针之间建立安全通信（可选 HTTPS + Token、WireGuard 等）。
+  * 主控出现故障时所有节点的集中封禁能力会受影响，需要冗余设计。
+
+> **小结**：目前我们选择“单节点独立部署”作为第一阶段目标，后续如需扩展再平滑迁移到集中式方案。
+
+## 独立部署内核框架
+
+为落实上述目标，仓库新增了 Python 模块化骨架，涵盖采集、指标、规则、告警与服务编排等功能。后续开发可在此基础上逐步实现具体逻辑。
+
+```
+watchdog/
+├── __init__.py            # 导出核心子模块，便于统一引用
+├── config.py              # 所有配置项的 dataclass 定义
+├── collectors/            # 与外部系统交互的采集层
+│   ├── __init__.py
+│   ├── xui_client.py      # 3x-ui API 客户端接口（含上下文管理器）
+│   └── xray_log_watcher.py# Xray 日志流式读取与解析接口
+├── metrics/
+│   ├── __init__.py
+│   └── aggregator.py      # 客户级指标聚合器接口
+├── rules/
+│   ├── __init__.py
+│   ├── engine.py          # 规则引擎骨架，负责选择配置档位并执行策略
+│   └── policies.py        # 策略协议与判定结果结构体
+├── notifiers/
+│   ├── __init__.py
+│   └── telegram.py        # Telegram 推送接口与消息结构
+└── services/
+    ├── __init__.py
+    ├── scheduler.py       # 背景调度器接口（后续可挂载 asyncio/APScheduler）
+    └── watchdog_service.py# 汇总所有组件的服务编排入口
+```
+
+### 关键设计点
+
+* **配置集中管理**：`config.py` 用 dataclass 描述 3x-ui 认证、Xray 日志位置、指标窗口、规则档位、Telegram 推送和调度参数，确保独立部署时只需一份配置即可运行。
+* **解耦采集与处理**：`collectors` 模块只关心与 3x-ui / Xray 的交互，后续可以按需替换实现，例如使用 `httpx` 或 `aiohttp`，或将日志读取改为 `journalctl`。
+* **流式指标聚合**：`metrics.MetricsAggregator` 约定了 `ingest` / `compute` / `purge_expired` 接口，方便在低资源环境中实现内存+SQLite 结合的轻量方案。
+* **可配置策略引擎**：`rules` 模块定义了规则档位、策略协议与决策结构，支持为不同客户选择不同严格等级，并明确了告警 (`warn`) 与封禁 (`block`) 等动作的语义。
+* **告警与执行分离**：`services.watchdog_service` 约束了指标处理、通知推送与封禁执行的顺序，同时预留 `TelegramNotifier` 可选（对无 Telegram 需求的部署可禁用）。
+* **调度与生命周期管理**：`Scheduler` 接口让我们可以在后续阶段选择最合适的调度库，同时保持核心逻辑与框架无关。
+
+## 核心模块（讨论版）
+
+1. **数据采集层**：按 3x-ui API 认证方式与频率限制轮询，解析 Xray JSON 日志，按客户聚合原始数据。
+2. **指标计算与存储**：围绕客户建立指标 Schema（并发、流量、源 IP、访问分类），支持多时间窗口，使用 SQLite 等嵌入式数据库持久化。
+3. **封禁策略引擎**：将规则抽象成可配置阈值/权重，计算风险评分或命中规则后调用 3x-ui 封禁接口，并记录详细操作日志。
+4. **告警通道**：Telegram 机器人推送 + 本地详细日志，预留接口扩展邮件/Webhook。
+5. **部署与维护**：规划模块化目录结构，提供一键安装/更新脚本与 README、FAQ，确保 1C1G 环境下资源占用可控。
+
+欢迎继续补充需求或对上述方案提出修改建议。
+
+## 快速部署与采集演示
+
+以下步骤假设系统中已经安装了 Python 3.9+ 与 Git：
+
+1. 克隆仓库并进入项目目录：
+
+   ```bash
+   git clone https://github.com/your-org/WatchDog.git
+   cd WatchDog
+   ```
+
+2. 执行安装脚本（会在仓库根目录创建 `.venv` 虚拟环境，并安装 `httpx`、`PyYAML` 等依赖）：
+
+   ```bash
+   ./scripts/install.sh
+   ```
+
+3. 根据实际环境复制并修改配置文件：
+
+   ```bash
+   cp config.example.yaml watchdog.yaml
+   # 编辑 watchdog.yaml，填入 3x-ui 面板地址、账号、密码与 Xray 日志路径
+   ```
+
+   * `xui.base_url`、`username`、`password` 与 [官方 Postman 文档](https://documenter.getpostman.com/view/5146551/2sB3QCTuB6) 完全对齐。
+   * `xray.access_log`、`is_json` 对应 [Xray LogObject 文档](https://xtls.github.io/config/log.html#logobject) 中 access log 的配置。
+
+4. 激活虚拟环境并运行一次性采集命令：
+
+   ```bash
+   source .venv/bin/activate
+   python -m watchdog collect-once --config watchdog.yaml --xray-limit 20
+   ```
+
+   * 若需要同时查询 `clientIps` 接口，可追加 `--include-client-ips` 开关。
+   * 输出为 JSON，包含所有客户的基础统计（`/panel/api/inbounds/list` 与 `/panel/api/inbounds/getClientTraffics/{email}`）以及最新的 Xray 日志条目，便于快速检查接口连通性。
+
+运行成功后即可确认 WatchDog 能够在目标 VPS 上抓取到 3x-ui 与 Xray 的真实数据，为下一阶段的指标计算与封禁策略奠定基础。
