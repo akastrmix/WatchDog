@@ -29,7 +29,7 @@ class XrayLogSource:
 
     access_log: Path
     error_log: Optional[Path] = None
-    is_json: bool = True
+    is_json: bool = False
     follow: bool = True
 
 

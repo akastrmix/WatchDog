@@ -26,6 +26,41 @@ class LogEvent:
 
 _ADDR_PATTERN = re.compile(r"\[(?P<ipv6>[^\]]+)\]|(?P<ipv4>\d+\.\d+\.\d+\.\d+)")
 
+_TEXT_LINE_PATTERNS = (
+    re.compile(
+        r"""
+        ^(?P<date>\d{4}/\d{2}/\d{2})\s+
+        (?P<time>\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s+
+        (?P<source>[^\s]+)\s+
+        (?P<status>accepted|rejected)\s+
+        (?P<target>[^\s]+)
+        (?:\s+\[(?P<detour>[^\]]+)\])?
+        (?:\s+(?P<rest>.*))?
+        $
+        """,
+        re.VERBOSE,
+    ),
+    re.compile(
+        r"""
+        ^(?P<date>\d{4}/\d{2}/\d{2})\s+
+        (?P<time>\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s+
+        from\s+(?P<source>[^\s]+)\s+
+        (?P<status>accepted|rejected)\s+
+        (?P<target>[^\s]+)
+        (?:\s+\[(?P<detour>[^\]]+)\])?
+        (?:\s+(?P<rest>.*))?
+        $
+        """,
+        re.VERBOSE,
+    ),
+)
+
+_EMAIL_PATTERN = re.compile(r"email:\s*(?P<email>\S+)")
+
+_KEY_VALUE_PATTERN = re.compile(
+    r"(?P<key>[A-Za-z0-9_\-]+):\s*(?P<value>.+?)(?=(?:\s+[A-Za-z0-9_\-]+:)|$)"
+)
+
 
 class XrayLogWatcher:
     """Tail and parse Xray logs.
@@ -93,6 +128,10 @@ class XrayLogWatcher:
                 return None
             return self._normalise_record(record)
 
+        text_event = self._parse_text_line(line)
+        if text_event:
+            return text_event
+
         # ``xraylogs`` endpoint delivers JSON even though the access log may be
         # configured as plain text.  To remain compatible we first try to parse
         # JSON, then fall back to storing the raw message.
@@ -108,6 +147,98 @@ class XrayLogWatcher:
                 metadata={"raw": line},
             )
         return self._normalise_record(record)
+
+    def _parse_text_line(self, line: str) -> Optional[LogEvent]:
+        match = None
+        for pattern in _TEXT_LINE_PATTERNS:
+            match = pattern.match(line)
+            if match:
+                break
+        if match is None:
+            return None
+
+        source = match.group("source")
+        target = match.group("target")
+        rest = (match.group("rest") or "").strip()
+        email = ""
+        reason = ""
+        metadata: Dict[str, object] = {
+            "timestamp": f"{match.group('date')} {match.group('time')}",
+            "status": match.group("status"),
+            "source": source,
+            "target": target,
+            "raw": line,
+        }
+
+        if rest:
+            key_values = list(_KEY_VALUE_PATTERN.finditer(rest))
+            consumed_ranges: List[tuple[int, int]] = []
+            for kv in key_values:
+                key = kv.group("key")
+                value = kv.group("value").strip()
+                consumed_ranges.append((kv.start(), kv.end()))
+                lowered = key.lower()
+                if lowered == "email":
+                    email = value
+                elif lowered == "reason":
+                    reason = value
+                else:
+                    metadata[key] = value
+
+            # Whatever is left after removing the captured ``key: value``
+            # pairs is treated as a free-form reason string.
+            if not reason:
+                remaining = rest
+                for start, end in reversed(consumed_ranges):
+                    remaining = remaining[:start] + remaining[end:]
+                remaining = remaining.strip()
+                if remaining:
+                    reason = remaining
+            if not email:
+                email_match = _EMAIL_PATTERN.search(rest)
+                if email_match:
+                    email = email_match.group("email")
+
+        ip = self._extract_address(source)
+
+        detour = match.group("detour")
+        if detour:
+            metadata["detour"] = detour
+        if reason:
+            metadata["reason"] = reason
+        if email:
+            metadata["email"] = email
+
+        protocol, destination = self._split_target(target)
+        if protocol:
+            metadata["protocol"] = protocol
+        if destination:
+            metadata["destination"] = destination
+
+        return LogEvent(
+            email=email,
+            ip=ip,
+            target=destination or target,
+            bytes_read=0,
+            bytes_written=0,
+            metadata=metadata,
+        )
+
+    @staticmethod
+    def _extract_address(value: str) -> str:
+        match = _ADDR_PATTERN.search(value)
+        if match:
+            return match.group("ipv6") or match.group("ipv4") or ""
+        if ":" in value:
+            return value.split(":", 1)[0]
+        return value
+
+    @staticmethod
+    def _split_target(value: str) -> tuple[str, str]:
+        if ":" in value:
+            protocol, destination = value.split(":", 1)
+            return protocol, destination
+        return "", value
 
     def _normalise_record(self, record: Dict[str, object]) -> LogEvent:
         metadata = dict(record)

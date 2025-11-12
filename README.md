@@ -110,7 +110,7 @@ watchdog/
    ```
 
    * `xui.base_url`、`username`、`password` 与 [官方 Postman 文档](https://documenter.getpostman.com/view/5146551/2sB3QCTuB6) 完全对齐。
-   * `xray.access_log`、`is_json` 对应 [Xray LogObject 文档](https://xtls.github.io/config/log.html#logobject) 中 access log 的配置。
+   * `xray.access_log` 应指向 Xray `log.access` 配置写入的文件（默认是纯文本 `access.log`）。若你启用了结构化 JSON 日志，请显式将 `is_json` 设为 `true`，否则保持默认的 `false` 以解析标准文本格式。
 
 4. 激活虚拟环境并运行一次性采集命令：
 
@@ -123,3 +123,39 @@ watchdog/
    * 输出为 JSON，包含所有客户的基础统计（`/panel/api/inbounds/list` 与 `/panel/api/inbounds/getClientTraffics/{email}`）以及最新的 Xray 日志条目，便于快速检查接口连通性。
 
 运行成功后即可确认 WatchDog 能够在目标 VPS 上抓取到 3x-ui 与 Xray 的真实数据，为下一阶段的指标计算与封禁策略奠定基础。
+
+## 已部署环境的升级流程
+
+当仓库发布了新的版本或你通过 Git 拉取了最新代码时，建议按照下列步骤在已经部署的 VPS 上完成平滑更新：
+
+1. **进入项目目录并同步最新代码**：
+
+   ```bash
+   cd /path/to/WatchDog
+   git pull
+   ```
+
+   如需保留本地修改，请先执行 `git status` 确认工作区干净，或自行创建分支处理冲突。
+
+2. **重新安装或升级依赖**：
+
+   安装脚本可以重复执行，它会复用已有的虚拟环境并升级依赖到 `requirements.txt` 中声明的最新版本。
+
+   ```bash
+   ./scripts/install.sh
+   ```
+
+3. **检查配置是否需要调整**：
+
+   对比仓库中的 `config.example.yaml` 与现有的 `watchdog.yaml`。如果新增了配置项，请参考注释补全字段。
+
+4. **重新激活虚拟环境并验证采集**：
+
+   ```bash
+   source .venv/bin/activate
+   python -m watchdog collect-once --config watchdog.yaml --xray-limit 20
+   ```
+
+   输出中应包含最新的 3x-ui 客户列表与 Xray 日志条目，确认后即可继续运行常驻服务或调度任务。
+
+若你通过 systemd、Supervisor 等方式常驻运行 WatchDog，请在更新完成后重启对应的服务进程，使其加载新的代码版本。

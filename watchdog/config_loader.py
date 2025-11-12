@@ -49,7 +49,7 @@ def load_config(path: Path) -> WatchDogConfig:
     xray = XrayLogSource(
         access_log=Path(xray_section["access_log"]),
         error_log=Path(xray_section["error_log"]) if xray_section.get("error_log") else None,
-        is_json=bool(xray_section.get("is_json", True)),
+        is_json=bool(xray_section.get("is_json", False)),
         follow=bool(xray_section.get("follow", True)),
     )
 

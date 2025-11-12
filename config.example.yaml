@@ -8,9 +8,9 @@ xui:
   request_timeout: 10
 
 xray:
-  access_log: "/var/log/xray/access.json"
+  access_log: "/var/log/xray/access.log"
   error_log: "/var/log/xray/error.log"
-  is_json: true
+  is_json: false
   follow: false
 
 metrics:
