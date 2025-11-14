@@ -1,3 +1,4 @@
+import json
 import unittest
 
 from watchdog.collectors.xray_log_watcher import XrayLogWatcher
@@ -59,6 +60,39 @@ class XrayLogWatcherTextParseTests(unittest.TestCase):
         self.assertEqual(event.metadata["transport"], "tcp")
         self.assertEqual(event.metadata["host"], "ipv6.ping0.cc")
         self.assertEqual(event.metadata["port"], 443)
+
+
+class XrayLogWatcherJsonParseTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.source = DummySource()
+        self.source.is_json = True
+        self.watcher = XrayLogWatcher(self.source)
+
+    def test_filters_internal_api_loopback_json(self):
+        record = {
+            "detour": "api -> api",
+            "target": "tcp:127.0.0.1:62789",
+            "from": "127.0.0.1:33122",
+        }
+        event = self.watcher._parse_line(json.dumps(record))  # pylint: disable=protected-access
+        self.assertIsNone(event)
+
+    def test_keeps_regular_json_records(self):
+        record = {
+            "email": "dacog96g",
+            "ip": "58.152.53.88",
+            "target": "www.gstatic.com:80",
+            "uplink": 123,
+            "downlink": 456,
+        }
+        event = self.watcher._parse_line(json.dumps(record))  # pylint: disable=protected-access
+        self.assertIsNotNone(event)
+        assert event is not None
+        self.assertEqual(event.email, "dacog96g")
+        self.assertEqual(event.ip, "58.152.53.88")
+        self.assertEqual(event.target, "www.gstatic.com:80")
+        self.assertEqual(event.bytes_read, 123)
+        self.assertEqual(event.bytes_written, 456)
 
 
 if __name__ == "__main__":

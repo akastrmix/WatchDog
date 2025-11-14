@@ -138,7 +138,7 @@ class XrayLogWatcher:
         try:
             record = json.loads(line)
         except json.JSONDecodeError:
-            return LogEvent(
+            return self._build_event(
                 email="",
                 ip="",
                 target="",
@@ -228,7 +228,7 @@ class XrayLogWatcher:
         ):
             return None
 
-        return LogEvent(
+        return self._build_event(
             email=email,
             ip=ip,
             target=target,
@@ -275,13 +275,13 @@ class XrayLogWatcher:
 
         return transport, host, port
 
-    def _normalise_record(self, record: Dict[str, object]) -> LogEvent:
+    def _normalise_record(self, record: Dict[str, object]) -> Optional[LogEvent]:
         metadata = dict(record)
         email = self._extract_email(record)
         ip = self._extract_ip(record)
         target = self._extract_target(record)
         bytes_read, bytes_written = self._extract_traffic(record)
-        return LogEvent(
+        return self._build_event(
             email=email,
             ip=ip,
             target=target,
@@ -352,6 +352,28 @@ class XrayLogWatcher:
                 return target
         return ""
 
+    def _build_event(
+        self,
+        *,
+        email: str,
+        ip: str,
+        target: str,
+        bytes_read: int,
+        bytes_written: int,
+        metadata: Dict[str, object],
+    ) -> Optional[LogEvent]:
+        if self._is_internal_api_log(metadata=metadata, target=target, ip=ip):
+            return None
+
+        return LogEvent(
+            email=email,
+            ip=ip,
+            target=target,
+            bytes_read=bytes_read,
+            bytes_written=bytes_written,
+            metadata=metadata,
+        )
+
     @staticmethod
     def _extract_traffic(record: Dict[str, object]) -> tuple[int, int]:
         uplink_keys = ("uplink", "upLink", "uplinkBytes", "uplink_bytes", "up")
@@ -380,3 +402,62 @@ class XrayLogWatcher:
             if isinstance(value, str) and value.isdigit():
                 return int(value)
         return None
+
+    def _is_internal_api_log(
+        self, *, metadata: Dict[str, object], target: str, ip: str
+    ) -> bool:
+        detour = metadata.get("detour") or metadata.get("tag")
+        if not isinstance(detour, str):
+            return False
+
+        detour_lower = detour.lower()
+        if "api" not in detour_lower:
+            return False
+
+        target_host = self._host_from_metadata(metadata, target)
+        if target_host and self._address_is_loopback(target_host):
+            return True
+
+        source_candidates = [
+            metadata.get("source"),
+            metadata.get("from"),
+            metadata.get("client"),
+        ]
+
+        for candidate in source_candidates:
+            if isinstance(candidate, str) and self._address_is_loopback(candidate):
+                return True
+
+        if ip and self._address_is_loopback(ip):
+            return True
+
+        return False
+
+    def _host_from_metadata(self, metadata: Dict[str, object], target: str) -> str:
+        host = ""
+        target_value = metadata.get("target")
+        if isinstance(target_value, str):
+            _, host, _ = self._split_target_fields(target_value)
+        if not host and target:
+            _, host, _ = self._split_target_fields(target)
+        host_value = metadata.get("host")
+        if not host and isinstance(host_value, str):
+            host = host_value
+        return host
+
+    @staticmethod
+    def _address_is_loopback(value: str) -> bool:
+        if not value:
+            return False
+
+        address = XrayLogWatcher._extract_address(value)
+        if not address:
+            return False
+
+        if address.startswith("127.") or address == "::1":
+            return True
+
+        if address.lower() == "localhost":
+            return True
+
+        return False
