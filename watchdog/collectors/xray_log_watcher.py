@@ -209,16 +209,29 @@ class XrayLogWatcher:
         if email:
             metadata["email"] = email
 
-        protocol, destination = self._split_target(target)
-        if protocol:
-            metadata["protocol"] = protocol
-        if destination:
-            metadata["destination"] = destination
+        transport, host, port = self._split_target_fields(target)
+        if transport:
+            metadata["transport"] = transport
+        if host:
+            metadata["host"] = host
+        if port is not None:
+            metadata["port"] = port
+
+        # 3x-ui proxies management API calls through Xray which results in
+        # synthetic loopback entries (``api -> api``).  They carry no customer
+        # traffic information and would otherwise pollute the data set, so drop
+        # them during normalisation.
+        if (
+            metadata.get("detour") == "api -> api"
+            and metadata["source"].startswith("127.0.0.1:")
+            and target.startswith("tcp:127.0.0.1:")
+        ):
+            return None
 
         return LogEvent(
             email=email,
             ip=ip,
-            target=destination or target,
+            target=target,
             bytes_read=0,
             bytes_written=0,
             metadata=metadata,
@@ -234,11 +247,33 @@ class XrayLogWatcher:
         return value
 
     @staticmethod
-    def _split_target(value: str) -> tuple[str, str]:
-        if ":" in value:
-            protocol, destination = value.split(":", 1)
-            return protocol, destination
-        return "", value
+    def _split_target_fields(value: str) -> tuple[str, str, Optional[int]]:
+        """Split ``value`` into transport, host and port components."""
+
+        transport = ""
+        remainder = value
+
+        if remainder.startswith(("tcp:", "udp:", "unix:")):
+            transport, _, remainder = remainder.partition(":")
+
+        host = remainder
+        port: Optional[int] = None
+
+        if remainder.startswith("["):
+            end = remainder.find("]")
+            if end != -1:
+                host = remainder[1:end]
+                rest = remainder[end + 1 :]
+                if rest.startswith(":") and rest[1:].isdigit():
+                    port = int(rest[1:])
+        elif ":" in remainder:
+            host, sep, maybe_port = remainder.rpartition(":")
+            if sep and maybe_port.isdigit():
+                port = int(maybe_port)
+            else:
+                host = remainder
+
+        return transport, host, port
 
     def _normalise_record(self, record: Dict[str, object]) -> LogEvent:
         metadata = dict(record)
