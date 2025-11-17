@@ -1,5 +1,10 @@
 """Metrics aggregation package."""
 
-from .aggregator import ClientMetrics, MetricsAggregator
+from .aggregator import IpBucket, MetricsAggregator, MetricsSnapshot, UserBucket
 
-__all__ = ["ClientMetrics", "MetricsAggregator"]
+__all__ = [
+    "IpBucket",
+    "MetricsAggregator",
+    "MetricsSnapshot",
+    "UserBucket",
+]

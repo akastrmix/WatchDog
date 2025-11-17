@@ -34,6 +34,16 @@ class XrayLogSource:
 
 
 @dataclass(slots=True)
+class XrayApiConfig:
+    """Connection parameters for the Xray gRPC API service."""
+
+    address: str = "127.0.0.1"
+    port: int = 62789
+    use_tls: bool = False
+    timeout: float = 5.0
+
+
+@dataclass(slots=True)
 class MetricWindow:
     """Time window used when aggregating metrics for a client."""
 
@@ -53,6 +63,7 @@ class MetricsConfig:
         )
     )
     retention: timedelta = timedelta(days=7)
+    bucket_interval: timedelta = timedelta(seconds=10)
 
 
 @dataclass(slots=True)
@@ -100,6 +111,7 @@ class WatchDogConfig:
 
     xui: XuiCredentials
     xray: XrayLogSource
+    xray_api: XrayApiConfig = field(default_factory=XrayApiConfig)
     metrics: MetricsConfig
     rules: RulesConfig
     telegram: Optional[TelegramConfig] = None

@@ -15,6 +15,7 @@ from .config import (
     SchedulerConfig,
     TelegramConfig,
     WatchDogConfig,
+    XrayApiConfig,
     XrayLogSource,
     XuiCredentials,
 )
@@ -53,6 +54,14 @@ def load_config(path: Path) -> WatchDogConfig:
         follow=bool(xray_section.get("follow", True)),
     )
 
+    xray_api_section = raw.get("xray_api", {})
+    xray_api = XrayApiConfig(
+        address=str(xray_api_section.get("address", "127.0.0.1")),
+        port=int(xray_api_section.get("port", 62789)),
+        use_tls=bool(xray_api_section.get("use_tls", False)),
+        timeout=float(xray_api_section.get("timeout", 5.0)),
+    )
+
     metrics_section = raw.get("metrics", {})
     metric_windows = [
         MetricWindow(label=entry["label"], duration=_parse_duration(entry["duration"]))
@@ -61,6 +70,7 @@ def load_config(path: Path) -> WatchDogConfig:
     metrics = MetricsConfig(
         windows=tuple(metric_windows) if metric_windows else MetricsConfig().windows,
         retention=_parse_duration(metrics_section.get("retention", "7d")),
+        bucket_interval=_parse_duration(metrics_section.get("bucket_interval", "10s")),
     )
 
     rules_section = raw.get("rules", {})
@@ -108,6 +118,7 @@ def load_config(path: Path) -> WatchDogConfig:
     return WatchDogConfig(
         xui=xui,
         xray=xray,
+        xray_api=xray_api,
         metrics=metrics,
         rules=rules,
         telegram=telegram_cfg,

@@ -4,8 +4,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Optional
 
@@ -16,9 +18,14 @@ from watchdog.config import XrayLogSource
 class LogEvent:
     """Represents a single Xray access log entry in a normalised structure."""
 
+    timestamp: datetime
     email: str
     ip: str
     target: str
+    transport: str
+    target_host: str
+    target_port: Optional[int]
+    status: str
     bytes_read: int
     bytes_written: int
     metadata: Dict[str, object]
@@ -77,7 +84,7 @@ class XrayLogWatcher:
         self._source = source
 
     # ------------------------------------------------------------------
-    def stream(self) -> Iterator[LogEvent]:
+    def stream(self, stop_event: Optional[threading.Event] = None) -> Iterator[LogEvent]:
         """Yield log events as they are appended to the log file."""
 
         path = Path(self._source.access_log)
@@ -85,9 +92,13 @@ class XrayLogWatcher:
             if self._source.follow:
                 handle.seek(0, os.SEEK_END)
             while True:
+                if stop_event and stop_event.is_set():
+                    break
                 position = handle.tell()
                 line = handle.readline()
                 if not line:
+                    if stop_event and stop_event.is_set():
+                        break
                     time.sleep(0.5)
                     handle.seek(position)
                     continue
@@ -139,9 +150,14 @@ class XrayLogWatcher:
             record = json.loads(line)
         except json.JSONDecodeError:
             return self._build_event(
+                timestamp=self._now(),
                 email="",
                 ip="",
                 target="",
+                transport="",
+                host="",
+                port=None,
+                status="",
                 bytes_read=0,
                 bytes_written=0,
                 metadata={"raw": line},
@@ -160,6 +176,8 @@ class XrayLogWatcher:
         source = match.group("source")
         target = match.group("target")
         rest = (match.group("rest") or "").strip()
+        timestamp = self._parse_timestamp_string(match.group("date"), match.group("time"))
+        status = (match.group("status") or "").strip()
         email = ""
         reason = ""
         metadata: Dict[str, object] = {
@@ -229,9 +247,14 @@ class XrayLogWatcher:
             return None
 
         return self._build_event(
+            timestamp=timestamp,
             email=email,
             ip=ip,
             target=target,
+            transport=transport,
+            host=host,
+            port=port,
+            status=status,
             bytes_read=0,
             bytes_written=0,
             metadata=metadata,
@@ -275,16 +298,69 @@ class XrayLogWatcher:
 
         return transport, host, port
 
+    def _parse_timestamp_string(self, date_str: str, time_str: str) -> datetime:
+        raw = f"{date_str} {time_str}"
+        for fmt in ("%Y/%m/%d %H:%M:%S.%f", "%Y/%m/%d %H:%M:%S"):
+            try:
+                return datetime.strptime(raw, fmt).replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+        return self._now()
+
+    def _extract_timestamp(self, record: Dict[str, object]) -> datetime:
+        candidates: List[str] = []
+        for key in ("timestamp", "time", "event_time", "ts"):
+            value = record.get(key)
+            if isinstance(value, str) and value:
+                candidates.append(value)
+        for candidate in candidates:
+            parsed = self._parse_generic_timestamp(candidate)
+            if parsed:
+                return parsed
+        return self._now()
+
+    @staticmethod
+    def _parse_generic_timestamp(value: str) -> Optional[datetime]:
+        trimmed = value.strip()
+        iso_candidate = trimmed.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(iso_candidate)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed
+        except ValueError:
+            pass
+        for fmt in ("%Y/%m/%d %H:%M:%S.%f", "%Y/%m/%d %H:%M:%S"):
+            try:
+                return datetime.strptime(trimmed, fmt).replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+        return None
+
     def _normalise_record(self, record: Dict[str, object]) -> Optional[LogEvent]:
         metadata = dict(record)
         email = self._extract_email(record)
         ip = self._extract_ip(record)
         target = self._extract_target(record)
         bytes_read, bytes_written = self._extract_traffic(record)
+        transport, host, port = self._split_target_fields(target)
+        if transport and "transport" not in metadata:
+            metadata["transport"] = transport
+        if host and "host" not in metadata:
+            metadata["host"] = host
+        if port is not None and "port" not in metadata:
+            metadata["port"] = port
+        status = self._extract_status(record)
+        timestamp = self._extract_timestamp(record)
         return self._build_event(
+            timestamp=timestamp,
             email=email,
             ip=ip,
             target=target,
+            transport=transport,
+            host=host,
+            port=port,
+            status=status,
             bytes_read=bytes_read,
             bytes_written=bytes_written,
             metadata=metadata,
@@ -355,9 +431,14 @@ class XrayLogWatcher:
     def _build_event(
         self,
         *,
+        timestamp: datetime,
         email: str,
         ip: str,
         target: str,
+        transport: str,
+        host: str,
+        port: Optional[int],
+        status: str,
         bytes_read: int,
         bytes_written: int,
         metadata: Dict[str, object],
@@ -366,9 +447,14 @@ class XrayLogWatcher:
             return None
 
         return LogEvent(
+            timestamp=timestamp,
             email=email,
             ip=ip,
             target=target,
+            transport=transport,
+            target_host=host,
+            target_port=port,
+            status=status,
             bytes_read=bytes_read,
             bytes_written=bytes_written,
             metadata=metadata,
@@ -402,6 +488,14 @@ class XrayLogWatcher:
             if isinstance(value, str) and value.isdigit():
                 return int(value)
         return None
+
+    @staticmethod
+    def _extract_status(record: Dict[str, object]) -> str:
+        for key in ("status", "action", "event"):
+            value = record.get(key)
+            if isinstance(value, str) and value:
+                return value
+        return ""
 
     def _is_internal_api_log(
         self, *, metadata: Dict[str, object], target: str, ip: str
@@ -461,3 +555,7 @@ class XrayLogWatcher:
             return True
 
         return False
+
+    @staticmethod
+    def _now() -> datetime:
+        return datetime.now(timezone.utc)

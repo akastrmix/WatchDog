@@ -13,6 +13,12 @@ xray:
   is_json: false
   follow: false
 
+xray_api:
+  address: "127.0.0.1"
+  port: 62789
+  use_tls: false
+  timeout: 5
+
 metrics:
   windows:
     - label: "1m"
@@ -20,6 +26,7 @@ metrics:
     - label: "5m"
       duration: "5m"
   retention: "7d"
+  bucket_interval: "10s"
 
 rules:
   default_profile: "baseline"

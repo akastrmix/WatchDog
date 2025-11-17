@@ -1,5 +1,6 @@
 import json
 import unittest
+from datetime import datetime
 
 from watchdog.collectors.xray_log_watcher import XrayLogWatcher
 
@@ -26,6 +27,11 @@ class XrayLogWatcherTextParseTests(unittest.TestCase):
         self.assertEqual(event.email, "dacog96g")
         self.assertEqual(event.ip, "58.152.53.88")
         self.assertEqual(event.target, "ping0.cc:443")
+        self.assertEqual(event.target_host, "ping0.cc")
+        self.assertEqual(event.target_port, 443)
+        self.assertEqual(event.transport, "")
+        self.assertEqual(event.status, "accepted")
+        self.assertIsInstance(event.timestamp, datetime)
         self.assertEqual(event.metadata["host"], "ping0.cc")
         self.assertEqual(event.metadata["port"], 443)
         self.assertNotIn("protocol", event.metadata)
@@ -48,6 +54,7 @@ class XrayLogWatcherTextParseTests(unittest.TestCase):
         assert event is not None
         self.assertEqual(event.metadata["host"], "sp.v2.udp-over-tcp.arpa")
         self.assertEqual(event.metadata["port"], 0)
+        self.assertEqual(event.target_host, "sp.v2.udp-over-tcp.arpa")
 
     def test_parse_transport_prefixed_target(self):
         line = (
@@ -60,6 +67,8 @@ class XrayLogWatcherTextParseTests(unittest.TestCase):
         self.assertEqual(event.metadata["transport"], "tcp")
         self.assertEqual(event.metadata["host"], "ipv6.ping0.cc")
         self.assertEqual(event.metadata["port"], 443)
+        self.assertEqual(event.transport, "tcp")
+        self.assertEqual(event.target_host, "ipv6.ping0.cc")
 
 
 class XrayLogWatcherJsonParseTests(unittest.TestCase):
@@ -91,8 +100,10 @@ class XrayLogWatcherJsonParseTests(unittest.TestCase):
         self.assertEqual(event.email, "dacog96g")
         self.assertEqual(event.ip, "58.152.53.88")
         self.assertEqual(event.target, "www.gstatic.com:80")
+        self.assertEqual(event.target_host, "www.gstatic.com")
         self.assertEqual(event.bytes_read, 123)
         self.assertEqual(event.bytes_written, 456)
+        self.assertIsInstance(event.timestamp, datetime)
 
 
 if __name__ == "__main__":
