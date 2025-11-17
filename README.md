@@ -1,13 +1,13 @@
 # WatchDog
 
-WatchDog 是一套为 3x-ui / Xray 节点量身设计的轻量化滥用监测内核。目前我们已经提供了**第一阶段的可执行骨架**：只需几条指令即可在 VPS 上完成环境准备，并通过命令行一次性拉取 3x-ui API 与 Xray 日志中的关键信息，方便快速验证连接是否正常。
+WatchDog 是一套为 3x-ui / Xray 节点量身设计的轻量化滥用监测内核。目前我们已经提供了**第一阶段的可执行骨架**：只需几条指令即可在 VPS 上完成环境准备，随后能同时对接 3x-ui API、Xray access 日志以及 Xray gRPC Stats API，快速验证节点连通性并生成过去 24 小时的用户/IP 行为快照。
 
 ## 系统目标
 
-* **以客户 (client/email) 为核心**：统一聚合每个客户的来源 IP、会话并发、访问域名分类、带宽/流量等信息。
+* **以客户 (client/email) 为核心**：统一聚合每个客户的来源 IP、访问域名分类、带宽/流量等信息，并维持 24 小时滚动时间序列。
 * **可配置的封禁模型**：根据连接数、跨 /24 IP、短时间大流量、扫描爆破迹象、高危域名访问等指标动态调整严格程度，区分“告警”和“立即封禁”。
 * **轻量部署**：目标运行环境为 1C1G VPS，仅依赖 3x-ui 官方 API 与 Xray 日志，避免重复造轮子。
-* **可观测性**：本地日志 + Telegram 机器人推送，输出详细上下文以便调试与取证。
+* **可观测性**：Xray Stats API + access log + 系统级计数器组合，配合本地日志与 Telegram 推送输出详细上下文以便调试与取证。
 
 ## 部署架构对比
 
@@ -49,10 +49,11 @@ watchdog/
 ├── collectors/            # 与外部系统交互的采集层
 │   ├── __init__.py
 │   ├── xui_client.py      # 3x-ui API 客户端接口（含上下文管理器）
-│   └── xray_log_watcher.py# Xray 日志流式读取与解析接口
+│   ├── xray_log_watcher.py# Xray 日志流式读取与解析接口
+│   └── xray_stats_client.py# Xray gRPC Stats API 客户端
 ├── metrics/
 │   ├── __init__.py
-│   └── aggregator.py      # 客户级指标聚合器接口
+│   └── aggregator.py      # 用户/IP 10 秒桶聚合器（保留 24 小时）
 ├── rules/
 │   ├── __init__.py
 │   ├── engine.py          # 规则引擎骨架，负责选择配置档位并执行策略
@@ -68,9 +69,9 @@ watchdog/
 
 ### 关键设计点
 
-* **配置集中管理**：`config.py` 用 dataclass 描述 3x-ui 认证、Xray 日志位置、指标窗口、规则档位、Telegram 推送和调度参数，确保独立部署时只需一份配置即可运行。
-* **解耦采集与处理**：`collectors` 模块只关心与 3x-ui / Xray 的交互，后续可以按需替换实现，例如使用 `httpx` 或 `aiohttp`，或将日志读取改为 `journalctl`。
-* **流式指标聚合**：`metrics.MetricsAggregator` 约定了 `ingest` / `compute` / `purge_expired` 接口，方便在低资源环境中实现内存+SQLite 结合的轻量方案。
+* **配置集中管理**：`config.py` 用 dataclass 描述 3x-ui 认证、Xray 日志位置、Xray gRPC API（`xray_api.address/port/use_tls`）、指标窗口/桶大小、规则档位、Telegram 推送和调度参数，确保独立部署时只需一份配置即可运行。
+* **解耦采集与处理**：`collectors` 模块只关心与 3x-ui / Xray / 系统计数器的交互，后续可以按需替换实现，比如自定义 gRPC 安全链路或改用 `journalctl` 读取日志。
+* **流式指标聚合**：`metrics.MetricsAggregator` 持续维护“用户/源 IP × 10 秒”的滑动窗口，持续 24 小时，既可以接收 Xray Stats API 带来的真实带宽，也能在缺少系统指标时按连接占比估算 IP 带宽。
 * **可配置策略引擎**：`rules` 模块定义了规则档位、策略协议与决策结构，支持为不同客户选择不同严格等级，并明确了告警 (`warn`) 与封禁 (`block`) 等动作的语义。
 * **告警与执行分离**：`services.watchdog_service` 约束了指标处理、通知推送与封禁执行的顺序，同时预留 `TelegramNotifier` 可选（对无 Telegram 需求的部署可禁用）。
 * **调度与生命周期管理**：`Scheduler` 接口让我们可以在后续阶段选择最合适的调度库，同时保持核心逻辑与框架无关。
@@ -109,8 +110,10 @@ watchdog/
    # 编辑 watchdog.yaml，填入 3x-ui 面板地址、账号、密码与 Xray 日志路径
    ```
 
-   * `xui.base_url`、`username`、`password` 与 [官方 Postman 文档](https://documenter.getpostman.com/view/5146551/2sB3QCTuB6) 完全对齐。
-   * `xray.access_log` 应指向 Xray `log.access` 配置写入的文件（默认是纯文本 `access.log`）。若你启用了结构化 JSON 日志，请显式将 `is_json` 设为 `true`，否则保持默认的 `false` 以解析标准文本格式。
+   * `xui.*` 与 [官方 Postman 文档](https://documenter.getpostman.com/view/5146551/2sB3QCTuB6) 完全对齐。
+   * `xray.*` 指向本机的 access/error log。如果 access log 是 JSON，请显式将 `is_json` 设为 `true`。
+   * `xray_api.*` 用于连接 Xray 的 gRPC API。若你沿用官方推荐，在 Xray 配置里添加 `api` 服务和 `tunnel` 入站（监听 127.0.0.1:62789），这里保持默认即可。
+   * `metrics.bucket_interval` 决定 10 秒时间桶，可按需调整；`retention` 决定保留多久的窗口（默认 7 天）。
 
 4. 激活虚拟环境并运行一次性采集命令：
 
@@ -122,7 +125,17 @@ watchdog/
    * 若需要同时查询 `clientIps` 接口，可追加 `--include-client-ips` 开关。
    * 输出为 JSON，包含所有客户的基础统计（`/panel/api/inbounds/list` 与 `/panel/api/inbounds/getClientTraffics/{email}`）以及最新的 Xray 日志条目，便于快速检查接口连通性。
 
-运行成功后即可确认 WatchDog 能够在目标 VPS 上抓取到 3x-ui 与 Xray 的真实数据，为下一阶段的指标计算与封禁策略奠定基础。
+5. （可选）运行指标采样命令，生成 24 小时窗口的用户/IP 数据：
+
+   ```bash
+   python -m watchdog collect-metrics --config watchdog.yaml --duration 300
+   ```
+
+   * 该命令会在 5 分钟内每 10 秒从 Xray Stats API 拉取所有用户的上传/下载流量，同时 tail access log 聚合连接数、来源 IP、目标域名等信息。
+   * 结束后会打印一份 JSON，其中包含 `users[]` 和 `ips[]` 列表：每个元素都是一个 10 秒时间桶（UTC 时间），带宽/连接数/unique IP/host 分布等指标均可直接用于可视化或后续规则分析。
+   * 如需更长时间的采样，调整 `--duration` 即可（必须 ≥10 秒）。命令会自动滚动保留 24 小时内的数据。
+
+运行成功后即可确认 WatchDog 能够在目标 VPS 上对接 3x-ui、Xray Stats API 与 access log，为下一阶段的指标计算与封禁策略奠定基础。
 
 ## 已部署环境的升级流程
 

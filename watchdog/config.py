@@ -111,9 +111,9 @@ class WatchDogConfig:
 
     xui: XuiCredentials
     xray: XrayLogSource
-    xray_api: XrayApiConfig = field(default_factory=XrayApiConfig)
     metrics: MetricsConfig
     rules: RulesConfig
+    xray_api: XrayApiConfig = field(default_factory=XrayApiConfig)
     telegram: Optional[TelegramConfig] = None
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     state_dir: Path = field(default_factory=lambda: Path("./state"))

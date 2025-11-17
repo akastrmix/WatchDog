@@ -118,9 +118,9 @@ def load_config(path: Path) -> WatchDogConfig:
     return WatchDogConfig(
         xui=xui,
         xray=xray,
-        xray_api=xray_api,
         metrics=metrics,
         rules=rules,
+        xray_api=xray_api,
         telegram=telegram_cfg,
         scheduler=scheduler,
         state_dir=state_dir,
