@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Optional
 
-from watchdog.collectors import XuiClient, XrayLogWatcher
+from watchdog.collectors import XrayLogWatcher
 from watchdog.config import WatchDogConfig
 from watchdog.metrics import MetricsAggregator
 from watchdog.notifiers import TelegramNotifier
@@ -16,7 +16,6 @@ from watchdog.services.scheduler import Scheduler
 class ServiceDependencies:
     """Bundle of pluggable components used by :class:`WatchDogService`."""
 
-    xui_client: XuiClient
     log_watcher: XrayLogWatcher
     metrics: MetricsAggregator
     rules: RuleEngine

@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
-from .collectors import XuiClient, XrayLogWatcher, XrayStatsClient
+from .collectors import XrayLogWatcher, XrayStatsClient
 from .config_loader import load_config
 from .metrics import MetricsAggregator
 
@@ -21,7 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     collect = sub.add_parser(
         "collect-once",
-        help="Fetch 3x-ui client data and sample Xray logs once",
+        help="Fetch Xray stats and sample logs once",
     )
     collect.add_argument(
         "--config",
@@ -34,11 +34,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=20,
         help="How many recent Xray log entries to include in the output",
-    )
-    collect.add_argument(
-        "--include-client-ips",
-        action="store_true",
-        help="Query /panel/api/inbounds/clientIps for every client",
     )
 
     metrics = sub.add_parser(
@@ -78,27 +73,21 @@ def _command_collect_once(args: argparse.Namespace) -> int:
     config = load_config(args.config)
 
     output = {
-        "clients": [],
+        "user_traffic": [],
         "xray_logs": [],
     }
 
-    with XuiClient(config.xui) as client:
-        for snapshot in client.list_clients():
-            entry = {
-                "email": snapshot.email,
-                "inbound_id": snapshot.inbound_id,
-                "client_id": snapshot.client_id,
-                "uuid": snapshot.uuid,
-                "enable": snapshot.enable,
-                "total_up": snapshot.total_up,
-                "total_down": snapshot.total_down,
-                "total": snapshot.total,
-                "last_online": snapshot.last_online,
-            }
-            if args.include_client_ips:
-                entry["ips"] = client.fetch_client_ips(snapshot.email).get("obj")
-            entry["traffic"] = client.pull_usage_stats(snapshot.email).get("obj")
-            output["clients"].append(entry)
+    with XrayStatsClient(config.xray_api) as stats_client:
+        counters = stats_client.query_user_traffic()
+        for email in sorted(counters):
+            snapshot = counters[email]
+            output["user_traffic"].append(
+                {
+                    "email": email,
+                    "uplink": snapshot.uplink,
+                    "downlink": snapshot.downlink,
+                }
+            )
 
     watcher = XrayLogWatcher(config.xray)
     for event in watcher.snapshot(limit=args.xray_limit):

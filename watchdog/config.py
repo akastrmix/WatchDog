@@ -14,16 +14,6 @@ from typing import Optional, Sequence
 
 
 @dataclass(slots=True)
-class XuiCredentials:
-    """Authentication configuration for the 3x-ui API."""
-
-    base_url: str
-    username: str
-    password: str
-    request_timeout: float = 5.0
-
-
-@dataclass(slots=True)
 class XrayLogSource:
     """Location and format hints for Xray log files."""
 
@@ -109,7 +99,6 @@ class SchedulerConfig:
 class WatchDogConfig:
     """Top-level configuration bundle for an independent deployment."""
 
-    xui: XuiCredentials
     xray: XrayLogSource
     metrics: MetricsConfig
     rules: RulesConfig

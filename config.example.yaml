@@ -1,12 +1,6 @@
 # Example configuration for a single-node WatchDog deployment
 # Copy this file and adjust the values before running the CLI.
 
-xui:
-  base_url: "http://127.0.0.1:2053/randompath"
-  username: "admin"
-  password: "change-me"
-  request_timeout: 10
-
 xray:
   access_log: "/var/log/xray/access.log"
   error_log: "/var/log/xray/error.log"

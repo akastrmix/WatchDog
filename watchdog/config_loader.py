@@ -17,7 +17,6 @@ from .config import (
     WatchDogConfig,
     XrayApiConfig,
     XrayLogSource,
-    XuiCredentials,
 )
 
 _DURATION_UNITS = {
@@ -38,13 +37,6 @@ def load_config(path: Path) -> WatchDogConfig:
     """
 
     raw = _load_yaml(path)
-
-    xui = XuiCredentials(
-        base_url=str(raw["xui"]["base_url"]),
-        username=str(raw["xui"]["username"]),
-        password=str(raw["xui"]["password"]),
-        request_timeout=float(raw["xui"].get("request_timeout", 5.0)),
-    )
 
     xray_section = raw.get("xray", {})
     xray = XrayLogSource(
@@ -116,7 +108,6 @@ def load_config(path: Path) -> WatchDogConfig:
     state_dir = Path(raw.get("state_dir", "./state"))
 
     return WatchDogConfig(
-        xui=xui,
         xray=xray,
         metrics=metrics,
         rules=rules,
