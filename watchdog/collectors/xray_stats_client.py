@@ -85,10 +85,18 @@ class XrayStatsClient:
     @staticmethod
     def _parse_user_stat_name(name: str) -> tuple[str, str]:
         parts = name.split(">>>")
-        if len(parts) != 4:
+        if len(parts) < 3:
             return "", ""
-        scope, email, category, metric = parts
-        if scope != "user" or category != "traffic":
+        scope = parts[0].lower()
+        if scope != "user":
+            return "", ""
+        email = parts[1]
+        if len(parts) == 3:
+            metric = parts[2].lower()
+            return email, metric
+        category = parts[2].lower()
+        metric = parts[3].lower()
+        if category != "traffic":
             return "", ""
         return email, metric
 

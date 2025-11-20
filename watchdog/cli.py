@@ -79,6 +79,12 @@ def _command_collect_once(args: argparse.Namespace) -> int:
 
     with XrayStatsClient(config.xray_api) as stats_client:
         counters = stats_client.query_user_traffic()
+        if not counters:
+            print(
+                "warning: Xray Stats API returned no user counters; "
+                "confirm that 'stats' and policy.statsUser{Up,Down}link are enabled",
+                file=sys.stderr,
+            )
         for email in sorted(counters):
             snapshot = counters[email]
             output["user_traffic"].append(

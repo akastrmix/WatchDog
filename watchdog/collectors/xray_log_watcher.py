@@ -146,6 +146,8 @@ class XrayLogWatcher:
         # ``xraylogs`` endpoint delivers JSON even though the access log may be
         # configured as plain text.  To remain compatible we first try to parse
         # JSON, then fall back to storing the raw message.
+        if self._looks_like_internal_api_log(line):
+            return None
         try:
             record = json.loads(line)
         except json.JSONDecodeError:
@@ -160,8 +162,8 @@ class XrayLogWatcher:
                 status="",
                 bytes_read=0,
                 bytes_written=0,
-                metadata={"raw": line},
-            )
+            metadata={"raw": line},
+        )
         return self._normalise_record(record)
 
     def _parse_text_line(self, line: str) -> Optional[LogEvent]:
@@ -555,6 +557,11 @@ class XrayLogWatcher:
             return True
 
         return False
+
+    @staticmethod
+    def _looks_like_internal_api_log(line: str) -> bool:
+        lower = line.lower()
+        return "[api -> api]" in lower and "127.0.0.1" in lower
 
     @staticmethod
     def _now() -> datetime:

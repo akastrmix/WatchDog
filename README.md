@@ -113,6 +113,26 @@ watchdog/
    * `xray_api.*` 用于连接 Xray 的 gRPC API。若你沿用官方推荐，在 Xray 配置里添加 `api` 服务和 `tunnel` 入站（监听 127.0.0.1:62789），这里保持默认即可。
    * `metrics.bucket_interval` 决定 10 秒时间桶，可按需调整；`retention` 决定保留多久的窗口（默认 7 天）。
 
+   > **必须启用 Xray Stats API**：请确保在 Xray 配置中添加
+   >
+   > ```jsonc
+   > "stats": {},
+   > "api": {
+   >   "tag": "api",
+   >   "services": ["HandlerService", "StatsService"]
+   > },
+   > "policy": {
+   >   "levels": {
+   >     "0": {
+   >       "statsUserUplink": true,
+   >       "statsUserDownlink": true
+   >     }
+   >   }
+   > }
+   > ```
+   >
+   > 同时新增一个仅监听本地的入站（官方示例使用 `tunnel` 或 `dokodemo-door`）暴露 gRPC API，例如监听 `127.0.0.1:62789`。没有这些配置，`user_traffic` 将为空。
+
 4. 激活虚拟环境并运行一次性采集命令：
 
    ```bash
