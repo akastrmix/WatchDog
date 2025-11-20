@@ -52,7 +52,11 @@ class XrayStatsClient:
     def query_user_traffic(self, *, reset: bool = False) -> Dict[str, UserTrafficSnapshot]:
         """Return cumulative uplink/downlink counters for every user."""
 
-        response = self._call_query(pattern="user>>>*>>>traffic>>>*", reset=reset)
+        # The StatsService "pattern" is a substring matcher, not a glob.  We
+        # therefore query for the broad ``"user>>>"`` prefix and perform
+        # filtering client-side to keep the implementation compatible with
+        # future naming tweaks.
+        response = self._call_query(pattern="user>>>", reset=reset)
         buckets: Dict[str, UserTrafficSnapshot] = {}
         for stat in response.stat:
             email, direction = self._parse_user_stat_name(stat.name)
